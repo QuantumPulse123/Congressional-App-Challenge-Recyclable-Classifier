@@ -181,15 +181,38 @@ export async function checkRecyclability(imageBase64: string): Promise<Recyclabi
   if (logits.length !== classMap.classes.length) throw new Error("Model output does not match class map")
 
   const probabilities = softmax(logits)
-  const classIndex = probabilities.indexOf(Math.max(...probabilities))
-  const material = classMap.classes[classIndex]
-  if (!material) throw new Error("Model returned an unknown class")
 
-  const recyclable = classMap.recyclable_classes.includes(material)
+  const scoredClasses = classMap.classes.map((name, index) => ({
+    name,
+    probability: probabilities[index] ?? 0,
+    recyclable: classMap.recyclable_classes.includes(name),
+  }))
+  
+  // Add together the scores for each of the two groups.
+  const recyclableScore = scoredClasses
+    .filter((item) => item.recyclable)
+    .reduce((sum, item) => sum + item.probability, 0)
+  
+  const nonRecyclableScore = scoredClasses
+    .filter((item) => !item.recyclable)
+    .reduce((sum, item) => sum + item.probability, 0)
+  
+  // Choose the group with the larger combined score.
+  const recyclable = recyclableScore >= nonRecyclableScore
+  
+  // Keep the representative material consistent with the chosen result.
+  const bestClass = scoredClasses
+    .filter((item) => item.recyclable === recyclable)
+    .sort((a, b) => b.probability - a.probability)[0]
+  
+  if (!bestClass) {
+    throw new Error("Unable to determine recyclability")
+  }
+
   return {
     recyclable,
-    material: formatMaterial(material),
-    instructions: disposalInstructions(material, recyclable),
-    confidence: probabilities[classIndex],
+    material: formatMaterial(bestClass.name),
+    instructions: disposalInstructions(bestClass.name, recyclable),
+    confidence: Math.max(recyclableScore, nonRecyclableScore),
   }
 }
