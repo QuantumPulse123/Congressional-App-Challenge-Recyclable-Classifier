@@ -181,6 +181,17 @@ export async function checkRecyclability(imageBase64: string): Promise<Recyclabi
   if (logits.length !== classMap.classes.length) throw new Error("Model output does not match class map")
 
   const probabilities = softmax(logits)
+  console.table(
+  classMap.classes
+    .map((name, index) => ({
+      material: name,
+      score: Number((probabilities[index] ?? 0).toFixed(3)),
+      group: classMap.recyclable_classes.includes(name)
+        ? "recyclable"
+        : "non-recyclable",
+    }))
+    .sort((a, b) => b.score - a.score)
+  )
 
   const scoredClasses = classMap.classes.map((name, index) => ({
     name,
