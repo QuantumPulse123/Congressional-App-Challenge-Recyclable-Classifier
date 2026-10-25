@@ -9,6 +9,7 @@ const MapPage = lazy(() => import("@/pages/MapPage"))
 const FeedPage = lazy(() => import("@/pages/FeedPage"))
 const RecyclePage = lazy(() => import("@/pages/RecyclePage"))
 const ReportPage = lazy(() => import("@/pages/ReportPage"))
+const LearnPage = lazy(() => import("@/pages/LearnPage"))
 
 function PageFallback() {
   return (
@@ -40,12 +41,13 @@ function AppShell() {
             <Route path="/" element={<MapPage />} />
             <Route path="/feed" element={<FeedPage />} />
             <Route path="/recycle" element={<RecyclePage />} />
+            <Route path="/learn" element={<LearnPage />} />
             <Route path="/report" element={<ReportPage />} />
           </Routes>
         </Suspense>
       </main>
 
-      {/* Bottom nav — hidden on report page */}
+      {/* Bottom navigation is hidden on the standalone report form. */}
       <Routes>
         <Route path="/report" element={null} />
         <Route path="*" element={<BottomNav />} />
