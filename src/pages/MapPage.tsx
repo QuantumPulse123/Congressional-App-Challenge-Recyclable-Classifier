@@ -64,6 +64,63 @@ const WATERSHED_WMS_URL =
 const WATERBODIES_WMS_URL =
   "https://mdgeodata.md.gov/imap/rest/services/Hydrology/MD_Waterbodies/MapServer/WMSServer"
 
+// Temporary sample reports for testing Watershed Lens.
+// These are fictional and are not real environmental incidents.
+const MOCK_REPORTS: TrashReport[] = [
+  {
+    id: "demo-ellicott-litter",
+    title: "DEMO ONLY: Litter near Ellicott City",
+    description: "Synthetic report for testing watershed lookups.",
+    category: "litter",
+    ai_classification: "DEMO DATA — not a real incident.",
+    latitude: 39.2673,
+    longitude: -76.7983,
+    address: "Ellicott City, Maryland",
+    status: "open",
+    image_url: null,
+    created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+  },
+  {
+    id: "demo-columbia-pollution",
+    title: "DEMO ONLY: Possible runoff near Columbia",
+    description: "Synthetic report for testing watershed lookups.",
+    category: "pollution",
+    ai_classification: "DEMO DATA — not a real incident.",
+    latitude: 39.2037,
+    longitude: -76.8610,
+    address: "Columbia, Maryland",
+    status: "in_progress",
+    image_url: null,
+    created_at: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(),
+  },
+  {
+    id: "demo-annapolis-dumping",
+    title: "DEMO ONLY: Dumping report near Annapolis",
+    description: "Synthetic report for testing watershed lookups.",
+    category: "illegal_dumping",
+    ai_classification: "DEMO DATA — not a real incident.",
+    latitude: 38.9784,
+    longitude: -76.4922,
+    address: "Annapolis, Maryland",
+    status: "open",
+    image_url: null,
+    created_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+  },
+  {
+    id: "demo-baltimore-hazard",
+    title: "DEMO ONLY: Sample waste report in Baltimore",
+    description: "Synthetic report for testing map filters and statuses.",
+    category: "hazardous_waste",
+    ai_classification: "DEMO DATA — not a real incident.",
+    latitude: 39.2904,
+    longitude: -76.6122,
+    address: "Baltimore, Maryland",
+    status: "resolved",
+    image_url: null,
+    created_at: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(),
+  },
+]
+
 export default function MapPage() {
   const navigate = useNavigate()
   const [reports, setReports] = React.useState<TrashReport[]>([])
@@ -83,7 +140,8 @@ export default function MapPage() {
 
     try {
       if (!isSupabaseConfigured) {
-        setReports([])
+        setReports(MOCK_REPORTS)
+        setSelectedReport(null)
         return
       }
 
