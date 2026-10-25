@@ -4,6 +4,7 @@ import { Suspense, lazy } from "react"
 import { Skeleton } from "@/components/ui/skeleton"
 import { BottomNav } from "@/components/BottomNav"
 import { ModeToggle } from "@/components/mode-toggle"
+import { AuthControls } from "@/components/AuthControls"
 
 const MapPage = lazy(() => import("@/pages/MapPage"))
 const FeedPage = lazy(() => import("@/pages/FeedPage"))
@@ -31,7 +32,10 @@ function AppShell() {
           </div>
           <span className="text-sm font-bold text-foreground tracking-tight">EcoReport</span>
         </div>
-        <ModeToggle />
+        <div className="flex items-center gap-2">
+          <AuthControls />
+          <ModeToggle />
+        </div>
       </header>
 
       {/* Page content */}

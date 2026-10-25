@@ -1,0 +1,10 @@
+node_modules/
+dist/
+public/ort/
+public/recycle-model-version.json
+.env
+.env.*
+!.env.example
+supabase/.temp/
+*.tsbuildinfo
+.graphify_*.json

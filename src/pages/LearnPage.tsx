@@ -298,11 +298,11 @@ export default function LearnPage() {
                       let optionClass = "h-auto min-h-11 w-full justify-start whitespace-normal py-3 text-left font-normal"
 
                       if (questionChecked && correctOption) {
-                        optionClass += " border-green-600 bg-green-50 text-green-950 hover:bg-green-50 dark:bg-green-950/40 dark:text-green-100 dark:hover:bg-green-950/40"
+                        optionClass += " border-green-600 bg-green-50 text-green-950 hover:bg-green-50 dark:border-green-400 dark:bg-green-950/60 dark:text-green-100 dark:hover:bg-green-950/60"
                       } else if (questionChecked && selected && !correctOption) {
-                        optionClass += " border-destructive bg-destructive/10 text-foreground hover:bg-destructive/10"
+                        optionClass += " border-destructive bg-destructive/10 text-foreground hover:bg-destructive/10 dark:border-destructive dark:bg-destructive/20 dark:hover:bg-destructive/25"
                       } else if (selected) {
-                        optionClass += " border-primary bg-primary/5"
+                        optionClass += " border-primary bg-primary/10 text-foreground ring-1 ring-primary hover:bg-primary/15 dark:border-primary dark:bg-primary/20 dark:text-foreground dark:hover:bg-primary/25"
                       }
 
                       return (
@@ -314,7 +314,7 @@ export default function LearnPage() {
                           aria-pressed={selected}
                           onClick={() => chooseAnswer(option.id)}
                         >
-                          <span className="mr-2 inline-flex size-6 shrink-0 items-center justify-center rounded-full border text-xs">
+                          <span className={`mr-2 inline-flex size-6 shrink-0 items-center justify-center rounded-full border text-xs ${selected ? "border-primary bg-primary text-primary-foreground" : "border-current/30"}`}>
                             {option.id.toUpperCase()}
                           </span>
                           <span className="whitespace-normal text-left">{option.text}</span>

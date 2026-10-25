@@ -13,6 +13,7 @@ import "leaflet/dist/leaflet.css"
 
 import {
   supabase,
+  REPORT_FIELDS,
   type TrashReport,
   getCategoryColor,
   getCategoryLabel,
@@ -27,6 +28,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import { ReportActions } from "@/components/ReportActions"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -123,6 +125,7 @@ export default function MapPage() {
   const navigate = useNavigate()
   const [reports, setReports] = React.useState<TrashReport[]>([])
   const [loading, setLoading] = React.useState(true)
+  const [loadError, setLoadError] = React.useState("")
   const [userLocation, setUserLocation] = React.useState<[number, number] | null>(null)
   const [activeFilters, setActiveFilters] = React.useState<Set<string>>(new Set())
   const [selectedReport, setSelectedReport] = React.useState<TrashReport | null>(null)
@@ -135,6 +138,7 @@ export default function MapPage() {
 
   async function fetchReports() {
     setLoading(true)
+    setLoadError("")
 
     try {
       if (!isSupabaseConfigured) {
@@ -145,13 +149,12 @@ export default function MapPage() {
 
       const { data, error } = await supabase
         .from("trash_reports")
-        .select("*")
+        .select(REPORT_FIELDS)
         .order("created_at", { ascending: false })
         .limit(500)
 
       if (error) {
-        console.error("Unable to load environmental reports:", error.message)
-        return
+        throw error
       }
 
       if (data) {
@@ -165,6 +168,8 @@ export default function MapPage() {
           return nextReports.find((report) => report.id === current.id) ?? null
         })
       }
+    } catch {
+      setLoadError("Unable to load reports. Check your connection and Supabase setup, then refresh.")
     } finally {
       setLoading(false)
     }
@@ -338,6 +343,7 @@ export default function MapPage() {
       </div>
 
       {/* Map */}
+      {loadError && <p role="alert" className="border-b px-4 py-2 text-xs text-destructive">{loadError}</p>}
       <div className="relative min-h-0 flex-1">
         {loading && (
           <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/60 backdrop-blur-sm">
@@ -479,6 +485,7 @@ export default function MapPage() {
                     <p className="mt-1 text-sm font-semibold leading-tight">
                       {selectedReport.title}
                     </p>
+                    <p className="mt-1 text-xs text-muted-foreground">{selectedReport.description}</p>
                     {selectedReport.ai_classification && (
                       <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
                         {selectedReport.ai_classification}
@@ -501,6 +508,14 @@ export default function MapPage() {
                 </div>
 
                 {/* Environmental context for the selected report. */}
+                {selectedReport.image_url && <img src={selectedReport.image_url} alt={`Photo for ${selectedReport.title}`} loading="lazy" className="mt-3 h-36 w-full rounded-md object-cover" />}
+                {isSupabaseConfigured && <ReportActions key={selectedReport.id} report={selectedReport} onUpdated={(updated) => {
+                  setReports((current) => current.map((report) => report.id === updated.id ? updated : report))
+                  setSelectedReport((current) => current?.id === updated.id ? updated : current)
+                }} onDeleted={(id) => {
+                  setReports((current) => current.filter((report) => report.id !== id))
+                  setSelectedReport((current) => current?.id === id ? null : current)
+                }} />}
                 {watershedLens && (
                   <div className="mt-3 rounded-lg border bg-muted/30 p-3">
                     <div className="flex items-center gap-2">

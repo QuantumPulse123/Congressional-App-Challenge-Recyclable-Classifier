@@ -2,8 +2,8 @@ import * as React from "react"
 import { useNavigate } from "react-router-dom"
 import { ArrowLeft, Camera, MapPin, Loader2, Sparkles, CheckCircle, AlertTriangle } from "lucide-react"
 
-import { supabase, CATEGORIES, isSupabaseConfigured } from "@/lib/supabase"
-import { classifyProblem } from "@/lib/ai"
+import { supabase, CATEGORIES, ensureReportSession } from "@/lib/supabase"
+import { classifyProblem, type ClassifyProblemResult } from "@/lib/ai"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -11,12 +11,14 @@ import { Label } from "@/components/ui/label"
 import { Card, CardContent } from "@/components/ui/card"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Progress } from "@/components/ui/progress"
+import { useReportAccess } from "@/hooks/use-report-access"
 
 type Step = "form" | "classifying" | "review" | "submitting" | "done" | "error"
 
 export default function ReportPage() {
   const navigate = useNavigate()
   const fileRef = React.useRef<HTMLInputElement>(null)
+  const { isAdmin } = useReportAccess()
 
   const [step, setStep] = React.useState<Step>("form")
   const [title, setTitle] = React.useState("")
@@ -27,19 +29,44 @@ export default function ReportPage() {
   const [location, setLocation] = React.useState<{ lat: number; lng: number } | null>(null)
   const [locationLoading, setLocationLoading] = React.useState(false)
   const [locationError, setLocationError] = React.useState("")
-  const [aiResult, setAiResult] = React.useState<{ category: string; summary: string; severity: string } | null>(null)
+  const [manualLatitude, setManualLatitude] = React.useState("")
+  const [manualLongitude, setManualLongitude] = React.useState("")
+  const [aiResult, setAiResult] = React.useState<ClassifyProblemResult | null>(null)
   const [error, setError] = React.useState("")
+
+  function invalidateAnalysis() {
+    if (aiResult && category === aiResult.category) setCategory("")
+    setAiResult(null)
+    setError("")
+    setStep("form")
+  }
 
   function handleImageChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 5 * 1024 * 1024) {
+      setError("Choose a JPEG, PNG, or WebP photo under 5 MB.")
+      e.target.value = ""
+      return
+    }
+    invalidateAnalysis()
     setImageFile(file)
+    setImagePreview(null)
     const reader = new FileReader()
     reader.onload = () => setImagePreview(reader.result as string)
+    reader.onerror = () => {
+      setImageFile(null)
+      setImagePreview(null)
+      setError("Unable to read this photo. Please choose another file.")
+    }
     reader.readAsDataURL(file)
   }
 
   function getLocation() {
+    if (!navigator.geolocation) {
+      setLocationError("Location access requires HTTPS or localhost and a supported browser.")
+      return
+    }
     setLocationLoading(true)
     setLocationError("")
     navigator.geolocation.getCurrentPosition(
@@ -56,7 +83,9 @@ export default function ReportPage() {
   }
 
   async function handleClassify() {
-    if (!description.trim()) return
+    if (!description.trim() || (imageFile && !imagePreview)) return
+    setError("")
+    setAiResult(null)
     setStep("classifying")
     try {
       const imageBase64 = imagePreview ?? undefined
@@ -64,38 +93,46 @@ export default function ReportPage() {
       setAiResult(result)
       if (!category) setCategory(result.category)
       setStep("review")
-    } catch {
-      setError("AI classification failed. You can still submit manually.")
+    } catch (err) {
+      setError(`${err instanceof Error ? err.message : "AI classification failed."} You can still select a category and submit manually.`)
       setStep("review")
     }
   }
 
   async function handleSubmit() {
+    if (!description.trim()) {
+      setError("Describe the problem before submitting.")
+      return
+    }
     if (!location) {
       setError("Location is required to submit a report.")
       return
     }
     setStep("submitting")
     setError("")
+    let uploadedPath: string | null = null
 
     try {
-      if (!isSupabaseConfigured) {
-        throw new Error("Reporting is in demo mode. Add the Supabase environment variables to submit reports.")
-      }
+      const userId = await ensureReportSession()
 
       let imageUrl: string | null = null
 
-      // Upload image if present (stub — would use Supabase Storage in production)
       if (imageFile) {
-        // imageUrl = await uploadImage(imageFile)  // TODO: wire to Supabase Storage
-        imageUrl = null
+        const extension = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" }[imageFile.type]
+        const path = `${userId}/${crypto.randomUUID()}.${extension}`
+        const { error: uploadError } = await supabase.storage.from("report-images").upload(path, imageFile, { contentType: imageFile.type })
+        if (uploadError) throw new Error(`Photo upload failed: ${uploadError.message}`)
+        uploadedPath = path
+        imageUrl = supabase.storage.from("report-images").getPublicUrl(path).data.publicUrl
       }
 
       const { error: dbError } = await supabase.from("trash_reports").insert({
+        user_id: userId,
         title: title.trim() || (aiResult?.summary.slice(0, 60) ?? "Environmental Issue"),
         description: description.trim(),
         category: category || "other",
         ai_classification: aiResult?.summary ?? null,
+        ai_severity: aiResult?.severity ?? null,
         latitude: location.lat,
         longitude: location.lng,
         status: "open",
@@ -105,6 +142,9 @@ export default function ReportPage() {
       if (dbError) throw dbError
       setStep("done")
     } catch (err: unknown) {
+      if (uploadedPath) {
+        await supabase.storage.from("report-images").remove([uploadedPath]).catch(() => undefined)
+      }
       setError(err instanceof Error ? err.message : "Failed to submit report.")
       setStep("error")
     }
@@ -181,7 +221,8 @@ export default function ReportPage() {
             id="description"
             placeholder="e.g. Large pile of trash dumped next to the park fence..."
             value={description}
-            onChange={(e) => setDescription(e.target.value)}
+            onChange={(e) => { setDescription(e.target.value); invalidateAnalysis() }}
+            maxLength={5000}
             disabled={step === "classifying" || step === "submitting"}
             className="min-h-[100px] resize-none"
           />
@@ -193,7 +234,8 @@ export default function ReportPage() {
           <input
             ref={fileRef}
             type="file"
-            accept="image/*"
+            accept="image/jpeg,image/png,image/webp"
+            disabled={step === "classifying" || step === "submitting"}
             capture="environment"
             className="sr-only"
             onChange={handleImageChange}
@@ -205,7 +247,8 @@ export default function ReportPage() {
                 variant="secondary"
                 size="sm"
                 className="absolute bottom-2 right-2 text-xs"
-                onClick={() => { setImageFile(null); setImagePreview(null) }}
+                disabled={step === "classifying" || step === "submitting"}
+                onClick={() => { setImageFile(null); setImagePreview(null); if (fileRef.current) fileRef.current.value = ""; invalidateAnalysis() }}
               >
                 Remove
               </Button>
@@ -213,6 +256,7 @@ export default function ReportPage() {
           ) : (
             <button
               type="button"
+              disabled={step === "classifying" || step === "submitting"}
               onClick={() => fileRef.current?.click()}
               className="flex h-32 w-full flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-border bg-muted/30 text-muted-foreground transition-colors hover:bg-muted/50"
             >
@@ -225,6 +269,21 @@ export default function ReportPage() {
         {/* Location */}
         <div className="space-y-2">
           <Label>Location *</Label>
+          {isAdmin && <div className="space-y-2 rounded-md border p-3">
+            <p className="text-xs font-medium">Admin: set the report location</p>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1"><Label htmlFor="report-latitude">Latitude</Label><Input id="report-latitude" type="number" step="any" min={-90} max={90} value={manualLatitude} disabled={step === "submitting"} onChange={(e) => setManualLatitude(e.target.value)} /></div>
+              <div className="space-y-1"><Label htmlFor="report-longitude">Longitude</Label><Input id="report-longitude" type="number" step="any" min={-180} max={180} value={manualLongitude} disabled={step === "submitting"} onChange={(e) => setManualLongitude(e.target.value)} /></div>
+            </div>
+            <Button variant="outline" size="sm" disabled={step === "submitting"} onClick={() => {
+              const lat = Number(manualLatitude), lng = Number(manualLongitude)
+              if (!manualLatitude.trim() || !manualLongitude.trim() || !Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+                setLocationError("Enter valid latitude (-90 to 90) and longitude (-180 to 180).")
+                return
+              }
+              setLocation({ lat, lng }); setLocationError("")
+            }}>Use coordinates</Button>
+          </div>}
           {location ? (
             <div className="flex items-center gap-2 rounded-md border border-input bg-muted/30 px-3 py-2">
               <MapPin className="size-4 text-green-600 dark:text-green-400 shrink-0" />
@@ -313,6 +372,7 @@ export default function ReportPage() {
               placeholder={aiResult?.summary.slice(0, 50) ?? "Brief title for this report"}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
+              maxLength={160}
             />
           </div>
         )}
@@ -323,7 +383,7 @@ export default function ReportPage() {
         {step === "form" && (
           <Button
             className="w-full"
-            disabled={!description.trim()}
+            disabled={!description.trim() || Boolean(imageFile && !imagePreview)}
             onClick={handleClassify}
           >
             <Sparkles className="size-4" />
@@ -349,9 +409,19 @@ export default function ReportPage() {
           </Button>
         )}
         {step === "form" && (
-          <p className="text-center text-xs text-muted-foreground">
-            AI will classify your report automatically
-          </p>
+          <>
+            <Button variant="outline" className="w-full" disabled={!description.trim() || Boolean(imageFile && !imagePreview)} onClick={() => { setError(""); setStep("review") }}>
+              Continue without AI
+            </Button>
+            <p className="text-center text-xs text-muted-foreground">
+              AI sends your description and optional photo to OpenRouter. Review its suggestions before submitting. Submitted reports, photos, and locations are public.
+            </p>
+          </>
+        )}
+        {step === "review" && (
+          <Button variant="outline" className="w-full" onClick={handleClassify}>
+            <Sparkles className="size-4" /> {aiResult ? "Analyze again" : "Retry AI analysis"}
+          </Button>
         )}
       </div>
     </div>

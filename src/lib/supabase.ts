@@ -12,6 +12,28 @@ const supabaseUrl = configuredUrl || "https://demo.supabase.co"
 const supabaseAnonKey = configuredAnonKey || "demo-anon-key"
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+export const REPORT_FIELDS = "id,title,description,category,ai_classification,ai_severity,latitude,longitude,address,status,image_url,created_at"
+
+// Anonymous Auth gives each browser an identity without requiring a sign-up UI.
+let sessionRequest: Promise<string> | null = null
+export async function ensureReportSession(): Promise<string> {
+  if (!isSupabaseConfigured) throw new Error("Configure Supabase to submit reports.")
+  if (!sessionRequest) {
+    sessionRequest = (async () => {
+      const { data: { session }, error } = await supabase.auth.getSession()
+      if (error) throw error
+      if (session) return session.user.id
+      const { data, error: signInError } = await supabase.auth.signInAnonymously()
+      if (signInError) {
+        window.dispatchEvent(new Event("ecoreport:sign-in"))
+        throw new Error("Please sign in or create an account, then submit your report again.")
+      }
+      if (!data.user) throw new Error("Unable to start a reporting session.")
+      return data.user.id
+    })().finally(() => { sessionRequest = null })
+  }
+  return sessionRequest
+}
 
 export type TrashReport = {
   id: string
@@ -19,6 +41,7 @@ export type TrashReport = {
   description: string
   category: string
   ai_classification: string | null
+  ai_severity?: "low" | "medium" | "high" | null
   latitude: number
   longitude: number
   address: string | null

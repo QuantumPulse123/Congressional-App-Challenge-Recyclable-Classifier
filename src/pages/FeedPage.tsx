@@ -2,7 +2,7 @@ import * as React from "react"
 import { useNavigate } from "react-router-dom"
 import { Plus, Clock, CheckCircle, AlertCircle, Loader2 } from "lucide-react"
 
-import { supabase, type TrashReport, getCategoryColor, getCategoryLabel, isSupabaseConfigured } from "@/lib/supabase"
+import { supabase, REPORT_FIELDS, type TrashReport, getCategoryColor, getCategoryLabel, isSupabaseConfigured } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -48,6 +48,7 @@ function ReportCard({ report }: { report: TrashReport }) {
         </div>
 
         <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{report.description}</p>
+        {report.image_url && <img src={report.image_url} alt={`Photo for ${report.title}`} loading="lazy" className="mt-2 h-36 w-full rounded-md object-cover" />}
 
         {report.ai_classification && (
           <p className="mt-1.5 text-xs text-primary/80 line-clamp-1 italic">
@@ -89,6 +90,7 @@ export default function FeedPage() {
   const navigate = useNavigate()
   const [reports, setReports] = React.useState<TrashReport[]>([])
   const [loading, setLoading] = React.useState(true)
+  const [error, setError] = React.useState("")
 
   React.useEffect(() => {
     async function fetchReports() {
@@ -97,13 +99,17 @@ export default function FeedPage() {
         return
       }
 
-      const { data } = await supabase
-        .from("trash_reports")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(50)
-      if (data) setReports(data as TrashReport[])
-      setLoading(false)
+      try {
+        const { data, error: loadError } = await supabase
+          .from("trash_reports")
+          .select(REPORT_FIELDS)
+          .order("created_at", { ascending: false })
+          .limit(50)
+        if (loadError) throw loadError
+        if (data) setReports(data as TrashReport[])
+      } catch {
+        setError("Unable to load reports. Check your connection and Supabase setup, then reload.")
+      } finally { setLoading(false) }
     }
     fetchReports()
   }, [])
@@ -126,7 +132,7 @@ export default function FeedPage() {
 
       {/* Feed */}
       <div className="flex-1 overflow-y-auto">
-        {loading ? (
+        {error ? <p role="alert" className="p-4 text-sm text-destructive">{error}</p> : loading ? (
           <>
             {Array.from({ length: 5 }).map((_, i) => <ReportSkeleton key={i} />)}
           </>
