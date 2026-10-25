@@ -2,7 +2,7 @@ name: Deploy RecycleCheck to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches: ["Watershed-Lens"]
   workflow_run:
     workflows: ["Publish recycle model for website"]
     types: [completed]
@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: Watershed-Lens
       - uses: actions/setup-node@v4
         with:
           node-version: 22
