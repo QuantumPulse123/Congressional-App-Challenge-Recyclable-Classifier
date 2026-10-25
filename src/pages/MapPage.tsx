@@ -60,9 +60,7 @@ const STATUS_COLORS: Record<string, string> = {
 }
 
 const WATERSHED_WMS_URL =
-  "https://mdgeodata.md.gov/imap/rest/services/Hydrology/MD_Watersheds/MapServer/WMSServer"
-const WATERBODIES_WMS_URL =
-  "https://mdgeodata.md.gov/imap/rest/services/Hydrology/MD_Waterbodies/MapServer/WMSServer"
+  "https://hydro.nationalmap.gov/arcgis/services/wbd/MapServer/WMSServer"
 
 // Temporary sample reports for testing Watershed Lens.
 // These are fictional and are not real environmental incidents.
@@ -363,33 +361,17 @@ export default function MapPage() {
           />
 
           {watershedLens && (
-            <>
-              {/* Official Maryland 12-digit watershed boundaries. */}
-              <WMSTileLayer
-                url={WATERSHED_WMS_URL}
-                layers="2"
-                styles=""
-                format="image/png"
-                transparent
-                version="1.1.1"
-                opacity={0.55}
-                zIndex={350}
-                attribution='Watersheds: <a href="https://mdgeodata.md.gov/imap/rest/services/Hydrology/MD_Watersheds/MapServer" target="_blank" rel="noreferrer">Maryland iMAP / DNR</a>'
-              />
-
-              {/* Official mapped waterbodies; not a calculated flow path. */}
-              <WMSTileLayer
-                url={WATERBODIES_WMS_URL}
-                layers="2"
-                styles=""
-                format="image/png"
-                transparent
-                version="1.1.1"
-                opacity={0.9}
-                zIndex={360}
-                attribution='Waterways: <a href="https://mdgeodata.md.gov/imap/rest/services/Hydrology/MD_Waterbodies/MapServer" target="_blank" rel="noreferrer">Maryland iMAP / DNR / USGS</a>'
-              />
-            </>
+            <WMSTileLayer
+              url={WATERSHED_WMS_URL}
+              layers="0"
+              styles=""
+              format="image/png"
+              transparent
+              version="1.1.1"
+              opacity={0.65}
+              zIndex={350}
+              attribution='Watershed boundaries: <a href="https://hydro.nationalmap.gov/arcgis/rest/services/wbd/MapServer" target="_blank" rel="noreferrer">USGS Watershed Boundary Dataset</a>'
+            />
           )}
 
           {userLocation && <LocationRecenter coords={userLocation} />}
@@ -459,7 +441,7 @@ export default function MapPage() {
               Watershed Lens
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              Showing Maryland watershed boundaries and mapped rivers and streams.
+              Showing nationwide watershed boundaries from the USGS.
             </p>
             <p className="mt-1.5 text-xs text-muted-foreground">
               Nearby waterways do not prove that a report affects that waterway.
@@ -533,8 +515,8 @@ export default function MapPage() {
                       </p>
                     ) : currentWatershedLookup.status === "not-found" ? (
                       <p className="mt-2 text-xs text-muted-foreground">
-                        No matching Maryland watershed polygon was found for these
-                        coordinates. The report may be outside the mapped coverage,
+                        No matching national watershed polygon was found for these
+                        coordinates. The location may be outside the service's coverage,
                         or its coordinates may need checking.
                       </p>
                     ) : currentWatershedLookup.status === "error" ? (
@@ -546,7 +528,7 @@ export default function MapPage() {
                       <div className="mt-2 space-y-2">
                         <div>
                           <p className="text-xs text-muted-foreground">
-                            Local watershed
+                            Local subwatershed (HUC-12)
                           </p>
                           <p className="text-sm font-medium">
                             {currentWatershedLookup.data.localName ??
@@ -557,7 +539,7 @@ export default function MapPage() {
                         {currentWatershedLookup.data.localCode && (
                           <div>
                             <p className="text-xs text-muted-foreground">
-                              Maryland watershed ID
+                              HUC-12 subwatershed ID
                             </p>
                             <p className="text-xs">
                               {currentWatershedLookup.data.localCode}
@@ -568,7 +550,7 @@ export default function MapPage() {
                         {currentWatershedLookup.data.broaderName && (
                           <div>
                             <p className="text-xs text-muted-foreground">
-                              Broader watershed
+                              Watershed (HUC-10)
                             </p>
                             <p className="text-sm">
                               {currentWatershedLookup.data.broaderName}
@@ -582,7 +564,7 @@ export default function MapPage() {
                         {currentWatershedLookup.data.tributaryBasin && (
                           <div>
                             <p className="text-xs text-muted-foreground">
-                              Tributary strategy basin
+                              Basin (HUC-6)
                             </p>
                             <p className="text-sm">
                               {currentWatershedLookup.data.tributaryBasin}
@@ -593,7 +575,7 @@ export default function MapPage() {
                         {currentWatershedLookup.data.hydrologicUnitCode && (
                           <div>
                             <p className="text-xs text-muted-foreground">
-                              Hydrologic unit ID
+                              Subbasin ID (HUC-8)
                             </p>
                             <p className="text-xs">
                               {currentWatershedLookup.data.hydrologicUnitCode}
@@ -613,12 +595,12 @@ export default function MapPage() {
                     )}
 
                     <a
-                      href="https://mdgeodata.md.gov/imap/rest/services/Hydrology/MD_Watersheds/MapServer/2"
+                      href="https://hydro.nationalmap.gov/arcgis/rest/services/wbd/FeatureServer/6"
                       target="_blank"
                       rel="noreferrer"
                       className="mt-2 inline-block text-xs font-medium text-primary underline underline-offset-2"
                     >
-                      View official watershed data
+                      View official USGS watershed data
                     </a>
                   </div>
                 )}
