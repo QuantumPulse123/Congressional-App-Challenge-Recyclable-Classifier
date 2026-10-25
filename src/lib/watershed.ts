@@ -1,6 +1,5 @@
-
-const WATERSHED_QUERY_URL =
-  "https://mdgeodata.md.gov/imap/rest/services/Hydrology/MD_Watersheds/MapServer/2/query";
+const USGS_WATERSHED_URL =
+  "https://hydro.nationalmap.gov/arcgis/rest/services/wbd/FeatureServer";
 
 export type WatershedInfo = {
   localName: string | null;
@@ -32,14 +31,60 @@ function cleanString(value: unknown): string | null {
   return result.length > 0 ? result : null;
 }
 
+async function queryWatershedLayer(
+  layerId: number,
+  outFields: string,
+  latitude: number,
+  longitude: number,
+  signal?: AbortSignal
+): Promise<ArcGisAttributes | null> {
+  const params = new URLSearchParams({
+    where: "1=1",
+    geometry: JSON.stringify({
+      x: longitude,
+      y: latitude,
+      spatialReference: { wkid: 4326 },
+    }),
+    geometryType: "esriGeometryPoint",
+    inSR: "4326",
+    spatialRel: "esriSpatialRelIntersects",
+    outFields,
+    returnGeometry: "false",
+    f: "json",
+  });
+
+  const response = await fetch(
+    `${USGS_WATERSHED_URL}/${layerId}/query?${params.toString()}`,
+    {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+      signal,
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `USGS watershed service returned HTTP ${response.status}.`
+    );
+  }
+
+  const result = (await response.json()) as ArcGisQueryResponse;
+
+  if (result.error) {
+    throw new Error(
+      result.error.message || "The USGS watershed service returned an error."
+    );
+  }
+
+  return result.features?.[0]?.attributes ?? null;
+}
+
 /**
- * Finds the Maryland watershed polygon that contains a coordinate.
- *
- * Coordinates must be WGS84:
+ * Finds the national watershed information for a coordinate.
+ * Coordinates use WGS84:
  * latitude = north/south, longitude = east/west.
- *
- * Returns null when no matching polygon is found.
- * Throws when the request fails, allowing the UI to show an error.
  */
 export async function lookupWatershedAtPoint(
   latitude: number,
@@ -57,62 +102,24 @@ export async function lookupWatershedAtPoint(
     throw new Error("Invalid latitude or longitude.");
   }
 
-  const params = new URLSearchParams({
-    where: "1=1",
-    geometry: JSON.stringify({
-      x: longitude,
-      y: latitude,
-      spatialReference: { wkid: 4326 },
-    }),
-    geometryType: "esriGeometryPoint",
-    inSR: "4326",
-    spatialRel: "esriSpatialRelIntersects",
-    outFields:
-      "dnr12dig,mde8name,mde8digt,mde6name,mde6digt,straname,hua14,hua11,hua8",
-    returnGeometry: "false",
-    f: "json",
-  });
+  const [subwatershed, watershed, subbasin, basin] =
+    await Promise.all([
+      queryWatershedLayer(6, "name,huc12", latitude, longitude, signal),
+      queryWatershedLayer(5, "name,huc10", latitude, longitude, signal),
+      queryWatershedLayer(4, "name,huc8", latitude, longitude, signal),
+      queryWatershedLayer(3, "name,huc6", latitude, longitude, signal),
+    ]);
 
-  const response = await fetch(
-    `${WATERSHED_QUERY_URL}?${params.toString()}`,
-    {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-      },
-      signal,
-    }
-  );
-
-  if (!response.ok) {
-    throw new Error(
-      `Watershed service returned HTTP ${response.status}.`
-    );
-  }
-
-  const result = (await response.json()) as ArcGisQueryResponse;
-
-  if (result.error) {
-    throw new Error(
-      result.error.message || "The watershed service returned an error."
-    );
-  }
-
-  const attributes = result.features?.[0]?.attributes;
-
-  if (!attributes) {
+  if (!subwatershed && !watershed && !subbasin && !basin) {
     return null;
   }
 
   return {
-    localName: cleanString(attributes.mde8name),
-    localCode: cleanString(attributes.dnr12dig),
-    broaderName: cleanString(attributes.mde6name),
-    broaderCode: cleanString(attributes.mde6digt),
-    tributaryBasin: cleanString(attributes.straname),
-    hydrologicUnitCode:
-      cleanString(attributes.hua14) ??
-      cleanString(attributes.hua11) ??
-      cleanString(attributes.hua8),
+    localName: cleanString(subwatershed?.name),
+    localCode: cleanString(subwatershed?.huc12),
+    broaderName: cleanString(watershed?.name),
+    broaderCode: cleanString(watershed?.huc10),
+    tributaryBasin: cleanString(basin?.name),
+    hydrologicUnitCode: cleanString(subbasin?.huc8),
   };
 }
