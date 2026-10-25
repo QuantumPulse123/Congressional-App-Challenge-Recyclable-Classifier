@@ -28,9 +28,9 @@ function AppShell() {
       <header className="flex items-center justify-between border-b bg-background px-4 py-2.5">
         <div className="flex items-center gap-2">
           <div className="flex size-7 items-center justify-center rounded-md bg-primary">
-            <span className="text-xs font-bold text-primary-foreground">EC</span>
+            <span className="text-xs font-bold text-primary-foreground">TT</span>
           </div>
-          <span className="text-sm font-bold text-foreground tracking-tight">EcoReport</span>
+          <span className="text-sm font-bold text-foreground tracking-tight">TerraTrack</span>
         </div>
         <div className="flex items-center gap-2">
           <AuthControls />
