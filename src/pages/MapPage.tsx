@@ -1,10 +1,28 @@
 import * as React from "react"
-import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from "react-leaflet"
+import {
+  MapContainer,
+  TileLayer,
+  WMSTileLayer,
+  CircleMarker,
+  Popup,
+  useMap,
+} from "react-leaflet"
 import { useNavigate } from "react-router-dom"
-import { MapPin, Plus, RefreshCw, Filter } from "lucide-react"
+import { MapPin, Plus, RefreshCw, Filter, Layers } from "lucide-react"
 import "leaflet/dist/leaflet.css"
 
-import { supabase, type TrashReport, getCategoryColor, getCategoryLabel, CATEGORIES, isSupabaseConfigured } from "@/lib/supabase"
+import {
+  supabase,
+  type TrashReport,
+  getCategoryColor,
+  getCategoryLabel,
+  CATEGORIES,
+  isSupabaseConfigured,
+} from "@/lib/supabase"
+import {
+  lookupWatershedAtPoint,
+  type WatershedInfo,
+} from "@/lib/watershed"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
@@ -18,20 +36,33 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu"
 
-/** Recenter the map to user location */
+/** Recenter the map when the browser successfully provides the user's location. */
 function LocationRecenter({ coords }: { coords: [number, number] }) {
   const map = useMap()
+
   React.useEffect(() => {
     map.setView(coords, 13)
   }, [coords, map])
+
   return null
 }
+
+type WatershedLookupState =
+  | { reportId: string; status: "loading" }
+  | { reportId: string; status: "loaded"; data: WatershedInfo }
+  | { reportId: string; status: "not-found" }
+  | { reportId: string; status: "error" }
 
 const STATUS_COLORS: Record<string, string> = {
   open: "bg-destructive text-white",
   in_progress: "bg-yellow-500 text-white",
   resolved: "bg-green-600 text-white",
 }
+
+const WATERSHED_WMS_URL =
+  "https://mdgeodata.md.gov/imap/rest/services/Hydrology/MD_Watersheds/MapServer/WMSServer"
+const WATERBODIES_WMS_URL =
+  "https://mdgeodata.md.gov/imap/rest/services/Hydrology/MD_Waterbodies/MapServer/WMSServer"
 
 export default function MapPage() {
   const navigate = useNavigate()
@@ -40,43 +71,116 @@ export default function MapPage() {
   const [userLocation, setUserLocation] = React.useState<[number, number] | null>(null)
   const [activeFilters, setActiveFilters] = React.useState<Set<string>>(new Set())
   const [selectedReport, setSelectedReport] = React.useState<TrashReport | null>(null)
+  const [watershedLens, setWatershedLens] = React.useState(false)
+  const [watershedLookup, setWatershedLookup] =
+    React.useState<WatershedLookupState | null>(null)
 
-  // Default map center (NYC)
-  const defaultCenter: [number, number] = [40.7128, -74.006]
+  // Default to central Maryland if location permission is unavailable.
+  const defaultCenter: [number, number] = [39.15, -76.75]
 
   async function fetchReports() {
     setLoading(true)
-    if (!isSupabaseConfigured) {
-      setReports([])
-      setLoading(false)
-      return
-    }
 
-    const { data, error } = await supabase
-      .from("trash_reports")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(500)
-    if (!error && data) setReports(data as TrashReport[])
-    setLoading(false)
+    try {
+      if (!isSupabaseConfigured) {
+        setReports([])
+        return
+      }
+
+      const { data, error } = await supabase
+        .from("trash_reports")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(500)
+
+      if (error) {
+        console.error("Unable to load environmental reports:", error.message)
+        return
+      }
+
+      if (data) {
+        const nextReports = data as TrashReport[]
+        setReports(nextReports)
+
+        // Avoid keeping a selected card open for a report that no longer exists
+        // in the refreshed result set.
+        setSelectedReport((current) => {
+          if (!current) return null
+          return nextReports.find((report) => report.id === current.id) ?? null
+        })
+      }
+    } finally {
+      setLoading(false)
+    }
   }
 
   React.useEffect(() => {
-    fetchReports()
+    void fetchReports()
+
     navigator.geolocation?.getCurrentPosition(
       (pos) => setUserLocation([pos.coords.latitude, pos.coords.longitude]),
-      () => null,
+      () => undefined,
       { timeout: 5000 }
     )
+    // Fetch once on mount. The refresh button calls fetchReports directly.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const filteredReports = activeFilters.size === 0
-    ? reports
-    : reports.filter((r) => activeFilters.has(r.category))
+  React.useEffect(() => {
+    if (!watershedLens || !selectedReport) {
+      setWatershedLookup(null)
+      return
+    }
+
+    const controller = new AbortController()
+    const report = selectedReport
+
+    setWatershedLookup({
+      reportId: report.id,
+      status: "loading",
+    })
+
+    lookupWatershedAtPoint(
+      report.latitude,
+      report.longitude,
+      controller.signal
+    )
+      .then((data) => {
+        if (controller.signal.aborted) return
+
+        setWatershedLookup(
+          data
+            ? {
+                reportId: report.id,
+                status: "loaded",
+                data,
+              }
+            : {
+                reportId: report.id,
+                status: "not-found",
+              }
+        )
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return
+        console.error("Unable to look up watershed:", error)
+        setWatershedLookup({
+          reportId: report.id,
+          status: "error",
+        })
+      })
+
+    return () => controller.abort()
+  }, [watershedLens, selectedReport])
+
+  const filteredReports =
+    activeFilters.size === 0
+      ? reports
+      : reports.filter((report) => activeFilters.has(report.category))
 
   function toggleFilter(value: string) {
-    setActiveFilters((prev) => {
-      const next = new Set(prev)
+    setActiveFilters((previous) => {
+      const next = new Set(previous)
       if (next.has(value)) next.delete(value)
       else next.add(value)
       return next
@@ -84,13 +188,17 @@ export default function MapPage() {
   }
 
   const center = userLocation ?? defaultCenter
+  const currentWatershedLookup: WatershedLookupState | null =
+    selectedReport && watershedLookup?.reportId === selectedReport.id
+      ? watershedLookup
+      : null
 
   return (
     <div className="relative flex h-full flex-col">
       {/* Header */}
       <div className="z-10 flex items-center justify-between border-b bg-background px-4 py-3">
-        <div className="flex items-center gap-2">
-          <MapPin className="size-5 text-primary" />
+        <div className="flex min-w-0 items-center gap-2">
+          <MapPin className="size-5 shrink-0 text-primary" />
           <span className="font-semibold text-foreground">Community Map</span>
           {!loading && (
             <Badge variant="secondary" className="text-xs">
@@ -98,13 +206,19 @@ export default function MapPage() {
             </Badge>
           )}
         </div>
-        <div className="flex items-center gap-2">
+
+        <div className="flex shrink-0 items-center gap-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" className="size-8 relative">
+              <Button
+                variant="outline"
+                size="icon"
+                className="relative size-8"
+                aria-label="Filter reports by category"
+              >
                 <Filter className="size-4" />
                 {activeFilters.size > 0 && (
-                  <span className="absolute -top-1 -right-1 flex size-4 items-center justify-center rounded-full bg-primary text-[10px] text-primary-foreground">
+                  <span className="absolute -right-1 -top-1 flex size-4 items-center justify-center rounded-full bg-primary text-[10px] text-primary-foreground">
                     {activeFilters.size}
                   </span>
                 )}
@@ -113,17 +227,17 @@ export default function MapPage() {
             <DropdownMenuContent align="end" className="w-48">
               <DropdownMenuLabel>Filter by category</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              {CATEGORIES.map((cat) => (
+              {CATEGORIES.map((category) => (
                 <DropdownMenuCheckboxItem
-                  key={cat.value}
-                  checked={activeFilters.has(cat.value)}
-                  onCheckedChange={() => toggleFilter(cat.value)}
+                  key={category.value}
+                  checked={activeFilters.has(category.value)}
+                  onCheckedChange={() => toggleFilter(category.value)}
                 >
                   <span
                     className="mr-2 inline-block size-2.5 rounded-full"
-                    style={{ backgroundColor: cat.color }}
+                    style={{ backgroundColor: category.color }}
                   />
-                  {cat.label}
+                  {category.label}
                 </DropdownMenuCheckboxItem>
               ))}
               {activeFilters.size > 0 && (
@@ -140,14 +254,35 @@ export default function MapPage() {
               )}
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button variant="outline" size="icon" className="size-8" onClick={fetchReports} disabled={loading}>
+
+          <Button
+            type="button"
+            variant={watershedLens ? "default" : "outline"}
+            size="sm"
+            className="h-8 gap-1.5 px-2"
+            aria-pressed={watershedLens}
+            title="Toggle Watershed Lens"
+            onClick={() => setWatershedLens((enabled) => !enabled)}
+          >
+            <Layers className="size-4" />
+            <span>Lens</span>
+          </Button>
+
+          <Button
+            variant="outline"
+            size="icon"
+            className="size-8"
+            onClick={() => void fetchReports()}
+            disabled={loading}
+            aria-label="Refresh reports"
+          >
             <RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} />
           </Button>
         </div>
       </div>
 
       {/* Map */}
-      <div className="relative flex-1">
+      <div className="relative min-h-0 flex-1">
         {loading && (
           <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/60 backdrop-blur-sm">
             <div className="flex flex-col items-center gap-3">
@@ -159,7 +294,7 @@ export default function MapPage() {
 
         <MapContainer
           center={center}
-          zoom={13}
+          zoom={userLocation ? 13 : 10}
           className="h-full w-full"
           style={{ zIndex: 0 }}
           zoomControl={false}
@@ -168,6 +303,37 @@ export default function MapPage() {
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
+
+          {watershedLens && (
+            <>
+              {/* Official Maryland 12-digit watershed boundaries. */}
+              <WMSTileLayer
+                url={WATERSHED_WMS_URL}
+                layers="2"
+                styles=""
+                format="image/png"
+                transparent
+                version="1.1.1"
+                opacity={0.55}
+                zIndex={350}
+                attribution='Watersheds: <a href="https://mdgeodata.md.gov/imap/rest/services/Hydrology/MD_Watersheds/MapServer" target="_blank" rel="noreferrer">Maryland iMAP / DNR</a>'
+              />
+
+              {/* Official mapped waterbodies; not a calculated flow path. */}
+              <WMSTileLayer
+                url={WATERBODIES_WMS_URL}
+                layers="2"
+                styles=""
+                format="image/png"
+                transparent
+                version="1.1.1"
+                opacity={0.9}
+                zIndex={360}
+                attribution='Waterways: <a href="https://mdgeodata.md.gov/imap/rest/services/Hydrology/MD_Waterbodies/MapServer" target="_blank" rel="noreferrer">Maryland iMAP / DNR / USGS</a>'
+              />
+            </>
+          )}
+
           {userLocation && <LocationRecenter coords={userLocation} />}
 
           {/* User location marker */}
@@ -190,7 +356,7 @@ export default function MapPage() {
           {filteredReports.map((report) => (
             <CircleMarker
               key={report.id}
-              center={[report.latitude, report.longitude]}
+              center={[Number(report.latitude), Number(report.longitude)]}
               radius={10}
               pathOptions={{
                 color: getCategoryColor(report.category),
@@ -204,12 +370,18 @@ export default function MapPage() {
             >
               <Popup>
                 <div className="min-w-[180px]">
-                  <p className="font-semibold text-sm">{report.title}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">{getCategoryLabel(report.category)}</p>
+                  <p className="text-sm font-semibold">{report.title}</p>
+                  <p className="mt-0.5 text-xs text-gray-500">
+                    {getCategoryLabel(report.category)}
+                  </p>
                   {report.ai_classification && (
-                    <p className="text-xs mt-1 text-gray-600 line-clamp-2">{report.ai_classification}</p>
+                    <p className="mt-1 line-clamp-2 text-xs text-gray-600">
+                      {report.ai_classification}
+                    </p>
                   )}
-                  <span className={`mt-2 inline-block rounded px-1.5 py-0.5 text-[10px] font-medium ${STATUS_COLORS[report.status] ?? "bg-muted text-muted-foreground"}`}>
+                  <span
+                    className={`mt-2 inline-block rounded px-1.5 py-0.5 text-[10px] font-medium ${STATUS_COLORS[report.status] ?? "bg-muted text-muted-foreground"}`}
+                  >
                     {report.status.replace("_", " ")}
                   </span>
                 </div>
@@ -218,55 +390,193 @@ export default function MapPage() {
           ))}
         </MapContainer>
 
-        {/* Report detail card */}
+        {/* Lens legend */}
+        {watershedLens && (
+          <div
+            className="pointer-events-none absolute left-3 top-3 z-10 max-w-[245px] rounded-lg border bg-background/95 px-3 py-2.5 shadow-sm"
+            aria-live="polite"
+          >
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <Layers className="size-4 text-primary" />
+              Watershed Lens
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Showing Maryland watershed boundaries and mapped rivers and streams.
+            </p>
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              Nearby waterways do not prove that a report affects that waterway.
+            </p>
+          </div>
+        )}
+
+        {/* Report details */}
         {selectedReport && (
-          <div className="absolute bottom-4 left-4 right-4 z-10">
-            <Card className="shadow-lg border">
+          <div className="absolute bottom-4 left-4 right-4 z-10 max-h-[58%] overflow-y-auto">
+            <Card className="border shadow-lg">
               <CardContent className="p-4">
                 <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span
-                        className="inline-block size-2.5 rounded-full shrink-0"
+                        className="inline-block size-2.5 shrink-0 rounded-full"
                         style={{ backgroundColor: getCategoryColor(selectedReport.category) }}
                       />
-                      <span className="text-xs text-muted-foreground">{getCategoryLabel(selectedReport.category)}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {getCategoryLabel(selectedReport.category)}
+                      </span>
                       <Badge
-                        variant={selectedReport.status === "resolved" ? "secondary" : "destructive"}
+                        variant={
+                          selectedReport.status === "resolved"
+                            ? "secondary"
+                            : "destructive"
+                        }
                         className="text-xs"
                       >
                         {selectedReport.status.replace("_", " ")}
                       </Badge>
                     </div>
-                    <p className="mt-1 font-semibold text-sm leading-tight">{selectedReport.title}</p>
+
+                    <p className="mt-1 text-sm font-semibold leading-tight">
+                      {selectedReport.title}
+                    </p>
                     {selectedReport.ai_classification && (
-                      <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{selectedReport.ai_classification}</p>
+                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                        {selectedReport.ai_classification}
+                      </p>
                     )}
                     <p className="mt-1 text-xs text-muted-foreground">
                       {new Date(selectedReport.created_at).toLocaleDateString()}
                     </p>
                   </div>
+
                   <Button
                     variant="ghost"
                     size="icon"
                     className="size-6 shrink-0"
                     onClick={() => setSelectedReport(null)}
+                    aria-label="Close report details"
                   >
                     ×
                   </Button>
                 </div>
+
+                {/* Environmental context for the selected report. */}
+                {watershedLens && (
+                  <div className="mt-3 rounded-lg border bg-muted/30 p-3">
+                    <div className="flex items-center gap-2">
+                      <Layers className="size-4 text-primary" />
+                      <p className="text-sm font-semibold">Watershed Lens</p>
+                    </div>
+
+                    {!currentWatershedLookup ||
+                    currentWatershedLookup.status === "loading" ? (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Looking up the watershed for this report...
+                      </p>
+                    ) : currentWatershedLookup.status === "not-found" ? (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        No matching Maryland watershed polygon was found for these
+                        coordinates. The report may be outside the mapped coverage,
+                        or its coordinates may need checking.
+                      </p>
+                    ) : currentWatershedLookup.status === "error" ? (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Watershed details could not be loaded right now. Check your
+                        connection and try again in a moment.
+                      </p>
+                    ) : (
+                      <div className="mt-2 space-y-2">
+                        <div>
+                          <p className="text-xs text-muted-foreground">
+                            Local watershed
+                          </p>
+                          <p className="text-sm font-medium">
+                            {currentWatershedLookup.data.localName ??
+                              "Mapped watershed found"}
+                          </p>
+                        </div>
+
+                        {currentWatershedLookup.data.localCode && (
+                          <div>
+                            <p className="text-xs text-muted-foreground">
+                              Maryland watershed ID
+                            </p>
+                            <p className="text-xs">
+                              {currentWatershedLookup.data.localCode}
+                            </p>
+                          </div>
+                        )}
+
+                        {currentWatershedLookup.data.broaderName && (
+                          <div>
+                            <p className="text-xs text-muted-foreground">
+                              Broader watershed
+                            </p>
+                            <p className="text-sm">
+                              {currentWatershedLookup.data.broaderName}
+                              {currentWatershedLookup.data.broaderCode
+                                ? ` (${currentWatershedLookup.data.broaderCode})`
+                                : ""}
+                            </p>
+                          </div>
+                        )}
+
+                        {currentWatershedLookup.data.tributaryBasin && (
+                          <div>
+                            <p className="text-xs text-muted-foreground">
+                              Tributary strategy basin
+                            </p>
+                            <p className="text-sm">
+                              {currentWatershedLookup.data.tributaryBasin}
+                            </p>
+                          </div>
+                        )}
+
+                        {currentWatershedLookup.data.hydrologicUnitCode && (
+                          <div>
+                            <p className="text-xs text-muted-foreground">
+                              Hydrologic unit ID
+                            </p>
+                            <p className="text-xs">
+                              {currentWatershedLookup.data.hydrologicUnitCode}
+                            </p>
+                          </div>
+                        )}
+
+                        <div className="border-t pt-2">
+                          <p className="text-xs leading-relaxed text-muted-foreground">
+                            A watershed is an area of land that drains toward a shared
+                            waterway. This report's location identifies its mapped
+                            watershed, but does not prove that the reported issue has
+                            reached a stream or affected water quality.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    <a
+                      href="https://mdgeodata.md.gov/imap/rest/services/Hydrology/MD_Watersheds/MapServer/2"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-2 inline-block text-xs font-medium text-primary underline underline-offset-2"
+                    >
+                      View official watershed data
+                    </a>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
         )}
       </div>
 
-      {/* FAB */}
+      {/* Create-report button */}
       <Button
         size="lg"
         className="absolute bottom-6 right-4 z-10 size-14 rounded-full shadow-lg"
         style={{ bottom: selectedReport ? "120px" : undefined }}
         onClick={() => navigate("/report")}
+        aria-label="Report a problem"
       >
         <Plus className="size-6" />
         <span className="sr-only">Report a problem</span>
