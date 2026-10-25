@@ -45,12 +45,6 @@ cd <project-directory>
 npm install
 ```
 
-If you are working on a specific branch, check it out before installing
-or running the app:
-
-``` bash
-git checkout Watershed-Lens
-```
 
 ### Configure environment variables
 
